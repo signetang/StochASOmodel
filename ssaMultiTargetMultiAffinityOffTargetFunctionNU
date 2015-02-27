@@ -1,0 +1,488 @@
+library(GillespieSSA)
+
+# Written by Signe Tang Karlsen and Pia Saermark
+# Supervisor: Lykke Pedersen
+# 12/01/2015
+# Explanations of names and notation can be found in the last lines of this R file
+
+
+nu_function <- function(targets_pr_rna,rna,oligo,enzyme,off_target='none',off_target_rna=0){ 
+  
+  ####################################################################
+  ##             STOP CRITERIA FOR OFF-TARGET MODELS                ##
+  ####################################################################
+  
+  # Oligo and enzyme should only be defined in the target-calculation
+  # to be sure not to acidentally double the dosis.
+  if(off_target=='full'){
+    if(oligo > 0){
+      stop("Can't calculate full off-target nu matrix when oligo > 0")
+    }else if(enzyme > 0){
+      stop("Can't calculate full off-target nu matrix when enzyme > 0")
+    }
+  }else if(off_target=='simple'){
+    if(off_target_rna==0){
+      stop("Can't calculate simple off-target nu matrix when off_target_rna == zero.")
+    }
+  }
+  
+  ####################################################################
+  ##                       HELPING FUNCTIONS                        ##
+  ####################################################################
+  
+  # Functions returning the position of letters R, E and C:
+  posE <- function(string){
+    return(gregexpr('E',string)[[1]][1])
+  }
+  posR <- function(string){
+    return(gregexpr('R',string)[[1]][1])
+  }
+  posC <- function(string){
+    return(gregexpr('C',string)[[1]][1])
+  }
+  # Functions returning the number of oligo and enzyme (only works for more than zero O or E):
+  nE <- function(string){
+    return(nchar(string)-posE(string))
+  }
+  nO <- function(string){
+    return(as.numeric(substr(string,2,2)))
+  }
+  # Functions returning where the oligos and enzymes are:
+  whereO <- function(string){
+    return(unlist(strsplit(substr(string,4,3+nO(string)),split='')))
+  }
+  whereE <- function(string){
+    return(unlist(strsplit(substr(string,posE(string)+1,nchar(string)),split='')))
+  }
+  
+  ####################################################################
+  ##                            STATES                              ##
+  ####################################################################
+  
+  # Oligo-RNA complex:
+  ORcombi <- lapply(1:targets_pr_rna,function(i) combn(targets_pr_rna,i))
+  ORcombi2 <- sapply(1:targets_pr_rna, function(j)
+              sapply(1:ncol(ORcombi[[j]]),function(i) paste(ORcombi[[j]][,i],collapse='')))
+  OR <- unlist(sapply(1:targets_pr_rna,function(i) paste('O',i,paste('R',ORcombi2[[i]],sep=''),sep='')))
+  
+  # Oligo-RNA-Enzyme complex:
+  ORcombi3 <- unlist(ORcombi2)
+  OREcombi <- sapply(1:length(ORcombi3),function(i)
+    lapply(1:nchar(ORcombi3[i]),function(j) combn(c(strsplit(ORcombi3[i],split='')[[1]]),j)))
+  if(targets_pr_rna > 1){
+    OREcombi2 <- lapply(1:length(ORcombi3), function(j)
+      sapply(1:length(OREcombi[[j]]),function(i)
+        sapply(1:ncol(OREcombi[[j]][[i]]),function(k)
+          paste(OREcombi[[j]][[i]][,k],collapse=''))))
+    ORE <- unlist(sapply(1:length(OR),function(i) paste(OR[i],'E',c(unlist(OREcombi2[[i]])),sep='')))
+  }else{
+    ORE <- c('O1R1E1')
+  }
+  
+  # Oligo-cleaved RNA-Enzyme complex:
+  OCE <- gsub('R','C',ORE)
+  
+  if(off_target=='simple'){
+    # Simple off target model:
+    N <- c('N','ON','ONE')
+  }else{
+    N <- c()
+  }
+  
+  # Array of all populations:
+  states <- (c('O', 'E', 'O0R', OR, ORE, OCE, 'O1C', N))
+  initial_states <- c(oligo,enzyme,rna,rep(0,(length(states)-4)),off_target_rna)
+  names(initial_states) <- states
+  
+  
+  ####################################################################
+  ##                           REACTIONS                            ##
+  ####################################################################
+  
+  # Association of RNA and oligo
+  if(targets_pr_rna > 1){
+    OR_to_kao <- OR[grep(as.character(targets_pr_rna),substr(OR,2,2),invert=T)]
+    first <- sapply(1:targets_pr_rna,function(i) paste('kao',i,'*O0R*O',sep=''))
+    kao <- c(first,unlist(lapply(1:targets_pr_rna,function(i) paste('kao',i,'*',
+             OR[grep(as.character(i),substr(OR_to_kao,3,3+targets_pr_rna),invert=T)],'*O',sep=''))))
+  }else{
+    kao <- c('kao1*O0R*O')
+  }
+  
+  # Dissociation of RNA-oligo complex
+  kdo <- unlist(lapply(1:targets_pr_rna,function(i)
+    paste('kdo',i,'*',OR[grep(as.character(i),substr(OR,3,3+targets_pr_rna))],sep='')))
+  
+  # Association of RNA-oligo complex with enzyme
+  kae_combi <- sapply(1:length(OREcombi),function(i) paste(OREcombi[[i]][[1]]))
+  kae_first_E <- unlist(sapply(1:length(OR),function(i)
+    paste('kae',c(unlist(kae_combi[[i]])),'*',OR[i],'*E',sep=''))) #first enzyme asso.
+  ORE_to_kae <- ORE[unlist(lapply(1:length(ORE),function(i) as.numeric(substr(ORE[i],2,2)) #number of oligos
+                != nchar(ORE[i])-which(strsplit(ORE[i],split='')[[1]]=='E')))] #Number of oligos != number of enzymes
+  if(targets_pr_rna>1){
+    possible_kae_E <- sapply(1:length(ORE_to_kae),function(i)
+      whereO(ORE_to_kae[i])[!(whereO(ORE_to_kae[i]) %in% whereE(ORE_to_kae[i]))])
+    rest_of_kae <- lapply(1:length(ORE_to_kae),function(i)
+      paste('kae',unlist(possible_kae_E[i]),'*',ORE_to_kae[i],'*E',sep=''))
+    kae <- c(kae_first_E, unlist(rest_of_kae))
+  }else{
+    kae <- kae_first_E
+  }
+  
+  # Dissociation of enzyme from RNA-oligo-enzyme complex
+  possible_kde_E <- sapply(1:length(ORE),function(i) whereE(ORE[i]))
+  kde <- unlist(lapply(1:length(ORE),function(i) paste('kde',unlist(possible_kde_E[i]),'*',ORE[i],sep='')))
+  
+  # Dissociation of 'unused' oligos from RNA-oligo-enzyme 
+  if(targets_pr_rna>1){
+    diffOE <- as.logical(sapply(1:length(ORE),
+              function(i) nO(ORE[i])-nE(ORE[i])))  #Vector of difference between #O and #E in ORE
+    diffORE <- ORE[diffOE] #The complexes with 'free' oligos in (more oligos than enzymes)
+    possible_kdoe_E <- sapply(1:length(diffORE),
+                       function(i) whereO(diffORE[i])[!(whereO(diffORE[i]) %in% whereE(diffORE[i]))])
+    kdoe <- lapply(1:length(diffORE),
+            function(i) paste('kdoe',unlist(possible_kdoe_E[i]),'*',diffORE[i],sep=''))    
+  }else{
+    kdoe <- c() # if there's only one target site this reaction can't occur
+  }
+  
+  # Cleaving
+  kc <- paste('kc*',ORE,sep='')
+  
+  # Dissociation of enzyme(s) and 'unused' oligos from the cleaved complex
+  kdce <- gsub('R','C',gsub('kc','kdce',kc))
+  
+  # Dissociation of cleaved rna and the 'used' oligo
+  kdc <- 'kdc*O1C'
+  
+  # Production rate of RNA
+  kp <- 'kp'
+  
+  # 'Background' degradation rate of RNA without oligo, RNA-oligo complex and RNA-oligo-enzyme complex
+  kd <- paste('kd*',c('O0R',OR,ORE),sep='')
+  
+  # Simple off-target model
+  if(off_target=='simple'){
+    Off <- c('kaoOff*N*O','kaeOff*ON*E','kdOff*ONE')
+  }else{
+    Off <- c()
+  }
+  
+  # Array of all reactions:
+  reactions <- unlist(c(kao,kdo,kae,kde,kdoe,kc,kdce,kdc,kp,kd,Off))
+
+  
+  ####################################################################
+  ##                           NU-MATRIX                            ##
+  ####################################################################
+  
+  # Creating an empty nu matrix
+  nu <- matrix(0,nrow=length(initial_states),length(reactions),dimnames=list(states,reactions))
+  
+  # Filling up the nu matrix one reactionat a time:
+  
+  # Association of RNA and oligo
+  for(reaction in kao){
+    reactant <- strsplit(reaction,split='*',fixed=TRUE)[[1]][2]
+    product_Onumber_replaced <- sub(substr(reactant,2,2),(as.numeric(substr(reactant,2,2))+1),reactant)
+    if(as.numeric(substr(reactant,2,2))==0){
+      product <- paste(product_Onumber_replaced,substr(reaction,4,4),sep='')
+    }else{
+      old_O <- strsplit(substr(product_Onumber_replaced,4,nchar(product_Onumber_replaced)),split='')[[1]]
+      new_O <- substr(reaction,4,4)
+      product <- paste(substr(product_Onumber_replaced,1,3),paste(sort(c(old_O,new_O)),collapse=''),sep='')
+    }
+    nu['O',reaction] <- -1
+    nu[reactant,reaction] <- -1
+    nu[product,reaction] <- 1
+  }
+  
+  # Dissociation of RNA-oligo complex
+  for(reaction in kdo){
+    reactant <- strsplit(reaction,split='*',fixed=T)[[1]][2]
+    old_O <- as.numeric(substr(reaction,4,4))
+    product <- paste(gsub(nO(reactant),nO(reactant)-1,substr(reactant,1,3)),
+                     gsub(old_O,'',substr(reactant,4,nchar(reactant))),sep='')
+    nu['O',reaction] <- 1
+    nu[reactant,reaction] <- -1
+    nu[product,reaction] <- 1
+  }
+  
+  # Association of RNA-oligo complex with enzyme
+  for(reaction in kae){
+    reactant <- strsplit(reaction,split='*',fixed=T)[[1]][2]
+    new_E <- substr(reaction,4,4)
+    if(grepl('E',reactant)){
+      old_E <- strsplit(substr(reactant,posE(reactant)+1,nchar(reactant)),split='')[[1]]
+      product <-paste(substr(reactant,1,posE(reactant)),paste(sort(c(new_E,old_E)),collapse=''),sep='')
+    }else{
+      product <- paste(reactant,'E',new_E,sep='')
+    }
+    nu['E',reaction] <- -1
+    nu[reactant,reaction] <- -1
+    nu[product,reaction] <- 1
+  }
+  
+  # Dissociation of enzyme from RNA-oligo-enzyme complex
+  for(reaction in kde){
+    reactant <- strsplit(reaction,split='*',fixed=T)[[1]][2]
+    if(nE(reactant)==1){
+      product <- substr(reactant,1,posE(reactant)-1)
+    }else{
+      old_E <- substr(reaction,4,4)
+      product <- paste(substr(reactant,1,posE(reactant)),
+                       gsub(old_E,'',substr(reactant,posE(reactant)+1,nchar(reactant))),sep='')
+    }
+    nu['E',reaction] <- 1
+    nu[reactant,reaction] <- -1
+    nu[product,reaction] <- 1
+  }
+  
+  # Dissociation of 'unoccupied' oligo from RNA-oligo-enzyme complex
+  for(reaction in unlist(kdoe)){
+    reactant <- strsplit(reaction,split='*',fixed=T)[[1]][2]
+    old_O <- substr(reaction,5,5)
+    product <- paste('O',as.numeric(substr(reactant,2,2))-1,
+                     gsub(old_O,'',substr(reactant,posR(reactant),posE(reactant)-1)),
+                     substr(reactant,posE(reactant),nchar(reactant)),sep='')
+    nu['O',reaction] <- 1
+    nu[reactant,reaction] <- -1
+    nu[product,reaction] <- 1
+  }
+  
+  # Cleaving
+  for(reaction in kc){
+    reactant <- strsplit(reaction,split='*',fixed=T)[[1]][2]
+    product <- gsub('R','C',reactant)
+    nu[reactant,reaction] <- -1
+    nu[product,reaction] <- 1
+  }
+  
+  # Dissociation of enzyme(s) and 'unused' oligos from the cleaved complex
+  for(reaction in kdce){
+    reactant <- strsplit(reaction,split='*',fixed=T)[[1]][2]
+    nu[reactant,reaction] <- -1
+    nu['O',reaction] <- (nO(reactant)-1)
+    nu['E',reaction] <- nE(reactant)
+    nu['O1C',reaction] <- 1
+  }
+  
+  # Dissociation of cleaved rna and the 'used' oligo
+  for(reaction in kdc){
+    nu['O',reaction] <- 1
+    nu['O1C',reaction] <- -1
+  }
+  
+  # Production rate of RNA
+  for(reaction in kp){
+    nu['O0R',reaction] <- 1
+  }
+  
+  # 'Background' degradation rate of RNA without oligo,
+  # RNA-oligo complex and RNA-oligo-enzyme complex
+  for(reaction in kd){
+    reactant <- strsplit(reaction,split='*',fixed=T)[[1]][2]
+    nu[reactant,reaction] <- -1
+    nu['O',reaction] <- nO(reactant)
+    if(grepl('E',reactant)){
+      nu['E',reaction] <- nE(reactant)
+    }
+  }
+  
+  # Simple off-target model
+  if(off_target=='simple'){
+    nu[c('O','N','ON'),'kaoOff*N*O'] <- c(-1,-1,1)
+    nu[c('E','ON','ONE'),'kaeOff*ON*E'] <- c(-1,-1,1)
+    nu[c('O','E','N','ONE'),'kdOff*ONE'] <- c(1,1,1,-1) # N remains constant
+  }
+  
+  # Full off target model: rename rows and columns of nu matrix
+  # and names of reactions and initial_states vectors
+  if(off_target=='full'){
+    reactions <- gsub('k','f',reactions) #rate renaming
+    reactions <- gsub('R','N',reactions) #state renaming in reactions
+    reactions <- gsub('C','L',reactions) #state renaming in reactions
+    colnames(nu) <- reactions            #nu renaming of rates
+    rownames <- gsub('R','N',states)     #RNA renaming
+    rownames <- gsub('C','L',rownames)   #cleaved RNA renaming 
+    row.names(nu) <- rownames            #nu renaming of states
+    names(initial_states) <- rownames    #initial states renaming 
+  }
+  
+  return(list(nu,initial_states,reactions))
+}
+
+####################################################################
+##              EXAMPLE OF FULL OFF-TARGET MODEL                  ##
+####################################################################
+
+# Target NU matrix
+target <-  nu_function(targets_pr_rna=2,rna=3750,oligo=2000,enzyme=1000)
+nu_target <- target[[1]]
+initial_states_target <- target[[2]]
+reactions_target <- target[[3]]
+
+# Off-target NU matrix
+off_target <- nu_function(targets_pr_rna=1,rna=1250,oligo=0,enzyme=0,off_target='full')
+nu_off_target <- off_target[[1]]
+initial_states_off_target <- off_target[[2]]
+reactions_off_target <- off_target[[3]]
+
+# Combining them into one NU matrix
+initial_states_combined <- c(initial_states_target,initial_states_off_target[3:length(initial_states_off_target)])
+reactions_combined <- c(reactions_target,reactions_off_target)
+nu_combined <- matrix(0,
+                      nrow=(dim(nu_target)[1]+dim(nu_off_target)[1]-2), # -2 to not repeat O and E
+                      (dim(nu_target)[2]+dim(nu_off_target)[2]),
+                      dimnames=list(names(initial_states_combined),reactions_combined)
+)
+nu_combined[1:dim(nu_target)[1],1:dim(nu_target)[2]] <- nu_target
+nu_combined[(dim(nu_target)[1]+1):dim(nu_combined)[1],(dim(nu_target)[2]+1):dim(nu_combined)[2]] <- nu_off_target[-(1:2),] #without O and E
+nu_combined[1:2,(dim(nu_target)[2]+1):dim(nu_combined)[2]]  <- nu_off_target[1:2,] # oligo and enzyme
+
+# Values of all the different rates (association, dissociation, cleaving, production, degradation)
+# parametre fra Lykke
+parms_target <- 1/2*c(kao1=2E-5, kao2=2E-5, 
+                      kdo1=0.06, kdo2=0.06,
+                      kae1=5E-4, kae2=5E-4,
+                      kde1=2, kde2=2,
+                      kdoe1 = 0.06, kdoe2 = 0.06,
+                      kc=2, kdce=2, kdc=0.1,
+                      kp=150, kd=0.04) 
+parms_off_target <- c(fao1=1E-5,fdo1=0.06, # lower association
+                      fae1=5E-4,fde1=2,
+                      fc=2,fdce=2,fdc=0.1,
+                      fp=50,fd=0.04) 
+parms_combined <- c(parms_target,parms_off_target)
+
+Gillespie <- ssa( x0=initial_states_combined,# initial state vector
+                  a=reactions_combined, # propensity vector
+                  nu=nu_combined, # state-change matrix
+                  parms = parms_combined, # model parameters
+                  tf=300, # final time
+                  method='D' #Exact method uses time steps of varying lenghts...
+)
+
+#head(Gillespie$data)
+#tail(Gillespie$data)
+#ssa.plot(Gillespie)
+
+# Plot relative amount of uncleaved RNA
+max_RNA_amount <- max(rowSums(Gillespie$data[,grep('O[0-9]R',colnames(Gillespie$data))]))
+plot(Gillespie$data[,1],rowSums(Gillespie$data[,grep('O[0-9]R',colnames(Gillespie$data))])/max_RNA_amount,
+     xlab='Time (min)',ylab='Relative total level of uncleaved target RNA',
+     col='red',type='l',ylim=c(0,1))
+title('Degradation of RNA - Full off-target model')
+
+# Test if oligo and enzyme amounts remains constant
+oligo_range <- range(Gillespie$data[,'O'] +
+                       rowSums(Gillespie$data[,grep('O1',colnames(Gillespie$data))]) +
+                       2*rowSums(Gillespie$data[,grep('O2',colnames(Gillespie$data))]))
+if(oligo_range[[1]] != oligo_range[[2]]){
+  stop('Total amount of oligo changes!')
+}
+enzyme_range <- range(Gillespie$data[,'E'] +
+                      rowSums(Gillespie$data[,grep('E1$',colnames(Gillespie$data))]) +
+                      rowSums(Gillespie$data[,grep('E2',colnames(Gillespie$data))]) +
+                      2*rowSums(Gillespie$data[,grep('E12',colnames(Gillespie$data))]))
+if(enzyme_range[[1]] != enzyme_range[[2]]){
+  stop('Total amount of enzyme changes!')
+}
+
+####################################################################
+##             EXAMPLE OF SIMPLE OFF-TARGET MODEL                 ##
+####################################################################
+
+target_simple <-  nu_function(targets_pr_rna=1,rna=3750,oligo=2000,enzyme=1250,off_target='simple',off_target_rna=1000)
+nu_simple <- target_simple[[1]]
+initial_states_simple <- target_simple[[2]]
+reactions_simple <- target_simple[[3]]
+
+# parametre fra Lykke
+parms_simple <- 1/2*c(kao1=2E-5, kdo1=0.06,
+                      kae1=5E-4, kde1=2,
+                      kc=2, kdce=2, kdc=0.1,
+                      kp=150, kd=0.04,
+                      kaoOff=2E-6,kaeOff=5E-4,kdOff=0.09) # lower association (parameters made up)
+
+Gillespie <- ssa( x0=initial_states_simple,# initial state vector
+                  a=reactions_simple, # propensity vector
+                  nu=nu_simple, # state-change matrix
+                  parms = parms_simple, # model parameters
+                  tf=300, # final time
+                  method='D' #Exact method uses time steps of varying lenghts...
+)
+
+#head(Gillespie$data)
+#tail(Gillespie$data)
+#ssa.plot(Gillespie)
+
+# Plot relative amount of uncleaved RNA
+max_RNA_amount <- max(rowSums(Gillespie$data[,grep('O[0-9]R',colnames(Gillespie$data))]))
+plot(Gillespie$data[,1],rowSums(Gillespie$data[,grep('O[0-9]R',colnames(Gillespie$data))])/max_RNA_amount,
+     xlab='Time (min)',ylab='Relative total level of uncleaved target RNA',
+     col='red',type='l',ylim=c(0,1))
+title('Degradation of RNA - Simple off target model')
+
+# Test if oligo and enzyme amounts remains constant
+oligo_range <- range(rowSums(Gillespie$data[,grep('O',colnames(Gillespie$data))]) -
+                     Gillespie$data[,'O0R'])
+if(oligo_range[[1]] != oligo_range[[2]]){
+  stop('Total amount of oligo changes!')
+}
+enzyme_range <- range(rowSums(Gillespie$data[,grep('E',colnames(Gillespie$data))]))
+if(enzyme_range[[1]] != enzyme_range[[2]]){
+  stop('Total amount of enzyme changes!')
+}
+
+####################################################################
+##                   EXPLANATION OF NOTATION                      ##
+####################################################################
+
+# State notation (target RNA):
+# ----------------------------
+# O <number> R <numbers> E <numbers>
+# The O number: How many oligos are bound to the RNA
+# The R number: At which position(s) the oligo(s) are bound to the RNA
+# The E nnumber: At which position(s) the enzyme(s) are bound to the RNA
+
+
+# Examples of state notation (target RNA):
+# ----------------------------------------
+# O0R:      RNA with nothing bound to it
+# O2R13:    RNA with two oligoes bound to it at target site 1 and 3
+# O3R12E12: RNA with 3 oligos and 2 enzymes bound at target site 1 and 2
+# O2C12E2:  Cleaved RNA with 2 oligos bound at target site 1 and 2 and an enzyme at target site 2
+# O1C:      Cleaved RNA and the oligo bound to the cleaved target site (which one is unknown)
+
+
+# Rates (target RNA):
+# -------------------
+# kao:   Association rate of RNA and oligo 
+# kdo:   Dissociation rate of RNA-oligo complex
+# kae:   Association rate of RNA-oligo complex and enzyme
+# kde:   Dissociation rate of RNA-oligo-enzyme complex
+# kdoe:  Dissociation rate of 'unused' oligos from RNA-oligo-enzyme
+# kc:    Cleaving rate
+# kdce:  Dissociation rate of enzyme and 'unused' oligos from the cleaved RNA-oligo-enzyme complex
+# kdc:   Dissociation rate of oligo and the cleaved RNA-oligo complex (CO)
+# pr:    Production rate
+# dr:    Background degradation rate (unrelated to oligo activity)
+
+
+# Off-target RNA (full model):
+# ----------------------------
+# The state notation uses an 'N' in stead of an 'R', and an 'L' in stead of a 'C'.
+# Rates are the same as for target RNA, but with an 'f' in stead of a 'k'
+# The function should be run twice (once for target and once for off-target) and the
+# resulting matrices combined into one nu matrix.
+
+
+# Off-target RNA (simple model):
+# ------------------------------
+# N:      Off-target
+# ON:     Off-target and oligo complex
+# ONE:    Off-target, oligo and enzyme complex
+# kaoOff: Association rate of oligo to off-target
+# kaeOff: Association rate of enzyme to oligo-off-target complex
+# kdOff:    A combined rate at which oligo and enzyme is released back into the system
