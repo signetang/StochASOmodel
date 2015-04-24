@@ -487,8 +487,8 @@ nu_function <- function(targets_pr_rna,rna,oligo,enzyme,off_target='none',off_ta
 # kc:    Cleaving rate
 # kdce:  Dissociation rate of enzyme and 'unused' oligos from the cleaved RNA-oligo-enzyme complex
 # kdc:   Dissociation rate of oligo and the cleaved RNA-oligo complex (CO)
-# pr:    Production rate
-# dr:    Background degradation rate (unrelated to oligo activity)
+# kp:    Production rate
+# kd:    Background degradation rate (unrelated to oligo activity)
 
 
 # Off-target RNA (full model):
@@ -506,4 +506,4 @@ nu_function <- function(targets_pr_rna,rna,oligo,enzyme,off_target='none',off_ta
 # ONE:    Off-target, oligo and enzyme complex
 # kaoOff: Association rate of oligo to off-target
 # kaeOff: Association rate of enzyme to oligo-off-target complex
-# kdOff:    A combined rate at which oligo and enzyme is released back into the system
+# kdOff:  A combined rate at which oligo and enzyme is released back into the system
