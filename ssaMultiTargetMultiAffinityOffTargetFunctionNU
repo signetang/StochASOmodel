@@ -474,8 +474,8 @@ nu_function <- function(targets_pr_rna,rna,oligo,enzyme,off_target='none',off_ta
 # O0R:      RNA with nothing bound to it
 # O2R13:    RNA with two oligoes bound to it at target site 1 and 3
 # O3R12E12: RNA with 3 oligos and 2 enzymes bound at target site 1 and 2
-# O2C1E12:  RNA cleaved at target site 1 with 2 oligos and 2 enzymes bound at target site 1 and 2
-# O1C:      Cleaved RNA and the oligo bound to the cleaved target site (which one is unknown)
+# O2C2E2:   Cleaved RNA at target site 2 with 2 oligos bound at target site 1 and 2 and an enzyme at target site 2
+# O1C1:     Cleaved RNA and the oligo bound to the cleaved target site
 
 
 # Rates (target RNA):
@@ -487,8 +487,8 @@ nu_function <- function(targets_pr_rna,rna,oligo,enzyme,off_target='none',off_ta
 # kc:    Cleaving rate
 # kdce:  Dissociation rate of enzyme and 'unused' oligos from the cleaved RNA-oligo-enzyme complex
 # kdc:   Dissociation rate of oligo and the cleaved RNA-oligo complex (CO)
-# kp:    Production rate
-# kd:    Background degradation rate (unrelated to oligo activity)
+# pr:    Production rate
+# dr:    Background degradation rate (unrelated to oligo activity)
 
 
 # Off-target RNA (full model):
